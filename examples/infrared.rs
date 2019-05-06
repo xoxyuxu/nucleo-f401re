@@ -1,36 +1,92 @@
 #![no_main]
 #![no_std]
 
-use cortex_m_rt::entry;
-//use cortex_m_semihosting::hprintln;
+//use cortex_m_rt::entry;
+use cortex_m_semihosting::hprintln;
 use panic_semihosting as _;
-use cortex_m::peripheral::Peripherals;
+//use cortex_m::peripheral::Peripherals;
 
-use nucleo_f401re::{delay::Delay, prelude::*, stm32};
+use nucleo_f401re::{
+    gpio::{gpioa::PA5, gpiob::PB8, gpioc::PC13, Edge, ExtiPin, Input, Output, PullDown, PushPull},
+    prelude::*,
+    stm32,
+};
 
 use embedded_infrared::IrReceiver;
 
-#[entry]
-fn main() -> ! {
-    // The Stm32 peripherals
-    let device = stm32::Peripherals::take().unwrap();
-    let cp = Peripherals::take().unwrap();
+use rtfm::app;
 
-    let rcc = device.RCC.constrain();
-    let clocks = rcc.cfgr.sysclk(84.mhz()).freeze();
+#[app(device = nucleo_f401re::hal::stm32)]
+const APP: () = {
+    // Late resources
+    static mut EXTI: stm32::EXTI = ();
+    static mut BUTTON: PC13<Input<PullDown>> = ();
+    static mut LED: PA5<Output<PushPull>> = ();
+    static mut IR: IrReceiver<PB8<Input<PullDown>>> = ();
 
-    let gpiob = device.GPIOB.split();
-    let scl = gpiob
-        .pb8
-        .into_floating_input();
+    #[init]
+    fn init() {
+        // Cortex-M peripherals
+        let _core: rtfm::Peripherals = core;
 
-    let mut recv = IrReceiver::new(scl);
+        // Device specific peripherals
+        let mut device: stm32::Peripherals = device;
 
-    let mut delay = Delay::new(cp.SYST, clocks);
+        // Configure PC13 (User Button) as an input
+        let gpioc = device.GPIOC.split();
+        let mut button = gpioc.pc13.into_pull_down_input();
 
-    loop {
-        recv.read_pin_state();
+        // Configure the led pin as an output
+        let gpioa = device.GPIOA.split();
+        let led = gpioa.pa5.into_push_pull_output();
 
-        delay.delay_us(50_u16);
+        // Enable the clock for the SYSCFG
+        device.RCC.apb2enr.modify(|_, w| w.syscfgen().enabled());
+
+        // Enable interrupt on PC13
+        button.make_interrupt_source(&mut device.SYSCFG);
+        button.enable_interrupt(&mut device.EXTI);
+        button.trigger_on_edge(&mut device.EXTI, Edge::RISING);
+
+        let gpiob = device.GPIOB.split();
+        let mut ir_pin = gpiob.pb8.into_pull_down_input();
+
+        ir_pin.make_interrupt_source(&mut device.SYSCFG);
+        ir_pin.enable_interrupt(&mut device.EXTI);
+        ir_pin.trigger_on_edge(&mut device.EXTI, Edge::RISING);
+
+        let recv = IrReceiver::new(ir_pin);
+
+        // Setup the system clock
+        let rcc = device.RCC.constrain();
+        let _clocks = rcc.cfgr.sysclk(84.mhz()).freeze();
+
+        hprintln!("init done").unwrap();
+
+        EXTI = device.EXTI;
+        LED = led;
+        BUTTON = button;
+        IR = recv;
     }
-}
+
+    #[idle]
+    fn idle() -> ! {
+        hprintln!("idle").unwrap();
+
+        // The idle loop
+        loop {}
+    }
+
+    #[interrupt(binds = EXTI9_5, resources = [EXTI, IR, LED])]
+    fn on_ir_recv() {
+        resources.IR.get_pin_ref().clear_interrupt_pending_bit(&mut resources.EXTI);
+        resources.LED.toggle();
+    }
+
+    #[interrupt(binds = EXTI15_10, resources = [EXTI, LED, BUTTON])]
+    fn on_button_press() {
+        // Clear the interrupt
+        resources.BUTTON.clear_interrupt_pending_bit(&mut resources.EXTI);
+    }
+};
+
