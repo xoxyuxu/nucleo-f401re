@@ -6,7 +6,6 @@ use cortex_m_semihosting::hprintln;
 use panic_semihosting as _;
 
 use nucleo_f401re::{i2c::I2c, prelude::*, stm32};
-
 use tpa2016d2::Tpa2016d2;
 
 #[entry]
@@ -34,17 +33,20 @@ fn main() -> ! {
 
     let mut tpa = Tpa2016d2::new(i2c);
 
-    // Print the registers
+    // Read all registers
+    tpa.sync().unwrap();
+
+    // Get and print  the registers
     for i in 1..=7 {
-        let v = tpa.read_device_reg(i).unwrap();
+        let v = tpa.device_reg(i).unwrap();
         hprintln!("{}: {}", i, v).unwrap();
     }
 
-    // Set the gain
+    // Update the gain
     tpa.gain(32).unwrap();
 
     // Should print 32
-    hprintln!("gain: {}", tpa.read_device_reg(5).unwrap()).unwrap();
+    hprintln!("gain: {}", tpa.device_reg(5).unwrap()).unwrap();
 
     loop {}
 }
