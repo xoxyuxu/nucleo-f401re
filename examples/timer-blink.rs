@@ -61,12 +61,14 @@ fn TIM2() {
 
     // Clear the interrupt
     unsafe {
-        (*stm32::TIM2::ptr()).sr.modify(|_, w| w.tif().set_bit());
-        //(*stm32::EXTI::ptr()).pr.modify(|_, w| w.pr13().set_bit());
+        (*stm32::TIM2::ptr()).sr.modify(|_, w| w.uif().clear_bit());
     }
 
     unsafe {
-        GLED.as_mut().map(|led| led.toggle());
+        if *COUNT == 20_000 {
+            GLED.as_mut().map(|led| led.toggle());
+            *COUNT = 0;
+        }
     }
 
 
